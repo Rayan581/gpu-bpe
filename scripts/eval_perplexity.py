@@ -7,6 +7,10 @@ Usage:
     python eval_perplexity.py --checkpoint ./model.pt --num_docs 100
 """
 
+from torch.utils.data import DataLoader
+from utils.data import load_wikitext, TextDataset
+from tokenizer.hsg import SemanticGuardedTokenizer
+from tokenizer.gpu_bpe import GPUBPETokenizer
 import torch
 import torch.nn as nn
 import sys
@@ -17,11 +21,6 @@ import math
 
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
-
-from tokenizer.gpu_bpe import GPUBPETokenizer
-from tokenizer.hsg import SemanticGuardedTokenizer
-from utils.data import create_openwebtext_subset, TextDataset
-from torch.utils.data import DataLoader
 
 
 def create_model(vocab_size: int = 50257, hidden_size: int = 768, num_layers: int = 12):
@@ -89,7 +88,7 @@ def evaluate_perplexity(
 
     # Create dataset
     print(f"Creating evaluation dataset with {num_docs} documents...")
-    texts = create_openwebtext_subset(num_docs=num_docs, max_doc_length=2000)
+    texts = load_wikitext(num_docs=num_docs)
     dataset = TextDataset(texts, tokenizer, max_length=max_length)
 
     try:

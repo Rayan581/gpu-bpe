@@ -7,6 +7,13 @@ Usage:
     python ablation_a.py --num_steps 100 --batch_size 32 --num_workers 2
 """
 
+from utils.data import get_dataloader
+from utils.metrics import MetricsLogger
+from dist.worker import TrainingWorker
+from dist.parameter_server import ParameterServer
+from dist.control import ControlLayer
+from compression.adaptive_quant import AdaptiveQuantizer
+from tokenizer.gpu_bpe import GPUBPETokenizer
 import torch
 import torch.nn as nn
 import sys
@@ -16,14 +23,6 @@ from pathlib import Path
 
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
-
-from tokenizer.gpu_bpe import GPUBPETokenizer
-from compression.adaptive_quant import AdaptiveQuantizer
-from dist.control import ControlLayer
-from dist.parameter_server import ParameterServer
-from dist.worker import TrainingWorker
-from utils.metrics import MetricsLogger
-from utils.data import get_dataloader
 
 
 def create_model(vocab_size: int = 50257, hidden_size: int = 768, num_layers: int = 12):
@@ -72,7 +71,8 @@ def train_ablation_a(
     model = create_model()
     param_server = ParameterServer(model, device=device)
     control = ControlLayer(num_workers, max_staleness=5)
-    quantizer = AdaptiveQuantizer(model, bits=8, update_interval=50, device=device)
+    quantizer = AdaptiveQuantizer(
+        model, bits=8, update_interval=50, device=device)
 
     # Workers
     workers = []
@@ -95,7 +95,7 @@ def train_ablation_a(
     # Data loader
     print("Creating data loader...")
     loader = get_dataloader(
-        'owt',
+        'wikitext',
         tokenizer,
         batch_size=batch_size * num_workers,
         num_docs=500,
@@ -158,7 +158,8 @@ def train_ablation_a(
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Ablation A: GPU tokenizer, no HSG")
+    parser = argparse.ArgumentParser(
+        description="Ablation A: GPU tokenizer, no HSG")
     parser.add_argument("--num_steps", type=int, default=100)
     parser.add_argument("--batch_size", type=int, default=32)
     parser.add_argument("--max_length", type=int, default=512)

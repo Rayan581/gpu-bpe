@@ -1,3 +1,4 @@
+
 """
 Baseline training: CPU tokenizer, synchronous FP32 training.
 
@@ -8,6 +9,10 @@ Usage:
     python train_baseline.py --num_steps 100 --batch_size 32
 """
 
+from utils.data import get_dataloader
+from utils.metrics import MetricsLogger
+from dist.worker import LocalTrainer
+from tokenizer.gpu_bpe import GPUBPETokenizer
 import torch
 import torch.nn as nn
 import sys
@@ -18,11 +23,6 @@ from pathlib import Path
 # Add project root to path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
-
-from tokenizer.gpu_bpe import GPUBPETokenizer
-from dist.worker import LocalTrainer
-from utils.metrics import MetricsLogger
-from utils.data import get_dataloader
 
 
 def create_model(vocab_size: int = 50257, hidden_size: int = 768, num_layers: int = 12):
@@ -82,12 +82,13 @@ def train_baseline(
     model = model.to(device)
 
     # Create trainer
-    trainer = LocalTrainer(model, tokenizer, device=device, use_compression=False)
+    trainer = LocalTrainer(
+        model, tokenizer, device=device, use_compression=False)
 
     # Create data loader
     print("Creating data loader...")
     loader = get_dataloader(
-        'owt',
+        'wikitext',
         tokenizer,
         batch_size=batch_size,
         num_docs=1000,

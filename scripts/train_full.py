@@ -12,6 +12,14 @@ Usage:
     python train_full.py --num_steps 100 --batch_size 32 --num_workers 2
 """
 
+from utils.data import get_dataloader
+from utils.metrics import MetricsLogger
+from dist.worker import TrainingWorker
+from dist.parameter_server import ParameterServer
+from dist.control import ControlLayer
+from compression.adaptive_quant import AdaptiveQuantizer
+from tokenizer.hsg import SemanticGuardedTokenizer
+from tokenizer.gpu_bpe import GPUBPETokenizer
 import torch
 import torch.nn as nn
 import sys
@@ -23,15 +31,6 @@ from typing import List
 # Add project root to path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
-
-from tokenizer.gpu_bpe import GPUBPETokenizer
-from tokenizer.hsg import SemanticGuardedTokenizer
-from compression.adaptive_quant import AdaptiveQuantizer
-from dist.control import ControlLayer
-from dist.parameter_server import ParameterServer
-from dist.worker import TrainingWorker
-from utils.metrics import MetricsLogger
-from utils.data import get_dataloader
 
 
 def create_model(vocab_size: int = 50257, hidden_size: int = 768, num_layers: int = 12):
@@ -62,7 +61,8 @@ class DistributedTrainer:
         device: torch.device = None
     ):
         self.num_workers = num_workers
-        self.device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = device or torch.device(
+            "cuda" if torch.cuda.is_available() else "cpu")
 
         # Shared components
         self.model = create_model()
@@ -177,7 +177,7 @@ def train_full(
     # Create data loader
     print("Creating data loader...")
     loader = get_dataloader(
-        'owt',
+        'wikitext',
         tokenizer,
         batch_size=batch_size * num_workers,
         num_docs=1000,
@@ -237,10 +237,12 @@ def train_full(
                 grad_norm=0.1,  # Placeholder
                 tokens_per_sec=num_tokens / (time.time() - step_start_time),
                 batch_size=batch_size,
-                staleness=trainer.control.staleness_tracker.get_worker_stats()[0]['staleness']
-                         if trainer.control.staleness_tracker.worker_status else 0,
+                staleness=trainer.control.staleness_tracker.get_worker_stats()[
+                    0]['staleness']
+                if trainer.control.staleness_tracker.worker_status else 0,
                 compression_ratio=trainer.quantizer.get_compression_ratio(),
-                quantized_payload_bytes=int(num_tokens * 32 / trainer.quantizer.get_compression_ratio() / 8)
+                quantized_payload_bytes=int(
+                    num_tokens * 32 / trainer.quantizer.get_compression_ratio() / 8)
             )
 
             if metrics_logger.should_log():
