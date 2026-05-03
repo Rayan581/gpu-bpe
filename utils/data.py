@@ -12,6 +12,9 @@ import torch
 from torch.utils.data import Dataset, DataLoader
 from typing import List, Tuple, Optional, Dict
 import random
+import os
+import json
+from pathlib import Path
 
 
 class TextDataset(Dataset):
@@ -111,7 +114,8 @@ class GSM8KDataset(Dataset):
         if len(token_ids) > self.max_length:
             token_ids = token_ids[:self.max_length]
         else:
-            token_ids = token_ids + [50256] * (self.max_length - len(token_ids))
+            token_ids = token_ids + [50256] * \
+                (self.max_length - len(token_ids))
 
         input_ids = torch.tensor(token_ids[:-1], dtype=torch.long)
         labels = torch.tensor(token_ids[1:], dtype=torch.long)
@@ -155,15 +159,54 @@ class DataLoader_:
             yield batch
 
 
+def get_cache_dir(dataset_type: str, cache_root: str = "cache/datasets") -> Path:
+    """Get cache directory for dataset."""
+    cache_path = Path(cache_root) / dataset_type
+    cache_path.mkdir(parents=True, exist_ok=True)
+    return cache_path
+
+
+def save_dataset_cache(data: List, dataset_type: str, cache_root: str = "cache/datasets"):
+    """Save dataset to cache."""
+    cache_dir = get_cache_dir(dataset_type, cache_root)
+    cache_file = cache_dir / "data.json"
+
+    with open(cache_file, 'w') as f:
+        json.dump(data, f, indent=2)
+
+    print(f"Cached {dataset_type} dataset to {cache_file}")
+
+
+def load_dataset_cache(dataset_type: str, cache_root: str = "cache/datasets") -> Optional[List]:
+    """Load dataset from cache if available."""
+    cache_dir = get_cache_dir(dataset_type, cache_root)
+    cache_file = cache_dir / "data.json"
+
+    if cache_file.exists():
+        with open(cache_file, 'r') as f:
+            data = json.load(f)
+        print(f"Loaded {dataset_type} dataset from cache ({len(data)} items)")
+        return data
+
+    return None
+
+
 def create_openwebtext_subset(
     num_docs: int = 1000,
-    max_doc_length: int = 2000
+    max_doc_length: int = 2000,
+    cache_root: str = "cache/datasets"
 ) -> List[str]:
     """
     Create synthetic OpenWebText-like dataset.
 
+    Checks cache first; if found, loads from cache. Otherwise generates new data.
+
     In practice, would use datasets.load_dataset('openwebtext')
     """
+    # Check cache first
+    cached = load_dataset_cache('openwebtext', cache_root)
+    if cached is not None:
+        return cached
     topics = [
         "machine learning", "deep learning", "neural networks",
         "transformers", "language models", "training",
@@ -184,15 +227,23 @@ def create_openwebtext_subset(
 
         docs.append(text)
 
+    # Save to cache
+    save_dataset_cache(docs, 'openwebtext', cache_root)
     return docs
 
 
-def create_gsm8k_subset(num_problems: int = 100) -> List[Dict]:
+def create_gsm8k_subset(num_problems: int = 100, cache_root: str = "cache/datasets") -> List[Dict]:
     """
     Create synthetic GSM8K-like dataset.
 
+    Checks cache first; if found, loads from cache. Otherwise generates new data.
+
     In practice, would use datasets.load_dataset('gsm8k', 'main')
     """
+    # Check cache first
+    cached = load_dataset_cache('gsm8k', cache_root)
+    if cached is not None:
+        return cached
     problems = []
 
     for i in range(num_problems):
@@ -219,11 +270,20 @@ def create_gsm8k_subset(num_problems: int = 100) -> List[Dict]:
             'answer_type': 'arithmetic'
         })
 
+    # Save to cache
+    save_dataset_cache(problems, 'gsm8k', cache_root)
     return problems
 
 
-def create_math_subset(num_problems: int = 100) -> List[Dict]:
-    """Create synthetic MATH dataset."""
+def create_math_subset(num_problems: int = 100, cache_root: str = "cache/datasets") -> List[Dict]:
+    """Create synthetic MATH dataset.
+
+    Checks cache first; if found, loads from cache. Otherwise generates new data.
+    """
+    # Check cache first
+    cached = load_dataset_cache('math', cache_root)
+    if cached is not None:
+        return cached
     problems = []
 
     for i in range(num_problems):
@@ -249,6 +309,8 @@ def create_math_subset(num_problems: int = 100) -> List[Dict]:
             'answer_type': 'algebra'
         })
 
+    # Save to cache
+    save_dataset_cache(problems, 'math', cache_root)
     return problems
 
 
@@ -259,7 +321,8 @@ def get_dataloader(
     num_docs: int = 100,
     max_length: int = 512,
     num_workers: int = 0,
-    pin_memory: bool = True
+    pin_memory: bool = True,
+    cache_root: str = "cache/datasets"
 ):
     """
     Create dataloader for specified dataset.
@@ -272,18 +335,22 @@ def get_dataloader(
         max_length: max sequence length
         num_workers: number of workers for dataloader
         pin_memory: pin memory for GPU
+        cache_root: root directory for caching datasets
 
     Returns:
         DataLoader instance
     """
     if dataset_type == 'owt':
-        texts = create_openwebtext_subset(num_docs=num_docs)
+        texts = create_openwebtext_subset(
+            num_docs=num_docs, cache_root=cache_root)
         dataset = TextDataset(texts, tokenizer, max_length=max_length)
     elif dataset_type == 'gsm8k':
-        problems = create_gsm8k_subset(num_problems=num_docs)
+        problems = create_gsm8k_subset(
+            num_problems=num_docs, cache_root=cache_root)
         dataset = GSM8KDataset(problems, tokenizer, max_length=max_length)
     elif dataset_type == 'math':
-        problems = create_math_subset(num_problems=num_docs)
+        problems = create_math_subset(
+            num_problems=num_docs, cache_root=cache_root)
         dataset = GSM8KDataset(problems, tokenizer, max_length=max_length)
     elif dataset_type == 'synthetic':
         texts = [f"Synthetic text {i} " * 50 for i in range(num_docs)]
