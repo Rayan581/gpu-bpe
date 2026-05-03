@@ -1,0 +1,27 @@
+{
+  "dataset": "wikitext-103",
+  "cuda_available": true,
+  "bpe_corpus_docs": 100,
+  "num_merges": 500,
+  "dag_depth": 1,
+  "parallelism_pct": 99.8,
+  "t_seq_train": 47.356,
+  "t_gpu_train": 4.514,
+  "speedup": 10.492,
+  "encoding": {
+    "WikiText-103": {
+      "SequentialBPETokenizer": 8625,
+      "CudaBPETokenizer": 3919488,
+      "CudaBPETokenizer+HSG": 3057762
+    },
+    "GSM8K": {
+      "SequentialBPETokenizer": 9415,
+      "CudaBPETokenizer": 133678,
+      "CudaBPETokenizer+HSG": 393761
+    }
+  },
+  "val_perplexity": 11.6843,
+  "val_loss": 2.4582,
+  "lm_steps": 2000,
+  "lm_seconds": 290.8
+}
