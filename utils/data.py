@@ -201,24 +201,52 @@ def load_wikitext(
             "Install with: pip install datasets"
         )
 
-    print(f"Loading WikiText-103 (document-level, {num_docs} docs)...")
-    dataset = load_dataset(
-        "EleutherAI/wikitext_document_level",
-        "wikitext-103-raw-v1",
-        split="train",
-        trust_remote_code=True,
-    )
+    print(f"Loading WikiText-103 ({num_docs} docs)...")
 
+    # Try document-level variant first (one row = one full article).
+    # Fall back to the line-by-line Salesforce/wikitext and group by article
+    # boundary (lines starting with ' = ' are article headings).
     docs = []
-    for row in dataset:
-        text = row["text"].strip()
-        if len(text) >= min_doc_length:
-            docs.append(text)
-        if len(docs) >= num_docs:
-            break
-
-    print(f"  Collected {len(docs)} documents "
-          f"(filtered from {len(dataset)} total rows)")
+    try:
+        dataset = load_dataset(
+            "EleutherAI/wikitext_document_level",
+            "wikitext-103-raw-v1",
+            split="train",
+        )
+        for row in dataset:
+            text = row["text"].strip()
+            if len(text) >= min_doc_length:
+                docs.append(text)
+            if len(docs) >= num_docs:
+                break
+        print(f"  Collected {len(docs)} docs via document-level variant")
+    except Exception as e:
+        print(f"  Document-level variant unavailable ({e}), "
+              f"falling back to Salesforce/wikitext ...")
+        dataset = load_dataset(
+            "Salesforce/wikitext",
+            "wikitext-103-raw-v1",
+            split="train",
+        )
+        # Group consecutive lines into articles using heading markers
+        current: list = []
+        for row in dataset:
+            line = row["text"]
+            if line.startswith(" = ") and not line.startswith(" = = ") and current:
+                doc = " ".join(current).strip()
+                if len(doc) >= min_doc_length:
+                    docs.append(doc)
+                if len(docs) >= num_docs:
+                    break
+                current = [line]
+            else:
+                current.append(line)
+        # flush last article
+        if current and len(docs) < num_docs:
+            doc = " ".join(current).strip()
+            if len(doc) >= min_doc_length:
+                docs.append(doc)
+        print(f"  Collected {len(docs)} docs via Salesforce/wikitext fallback")
 
     save_dataset_cache(docs, cache_key, cache_root)
     return docs
