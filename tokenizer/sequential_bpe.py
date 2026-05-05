@@ -80,11 +80,8 @@ class SequentialBPETokenizer:
         print(
             f"  SequentialBPE: {len(tokens):,} bytes, target {num_merges} merges")
 
-        try:
-            from tqdm.auto import tqdm as _tqdm
-            _have_tqdm = True
-        except ImportError:
-            _have_tqdm = False
+        from tokenizer._progress import get_tqdm as _get_tqdm
+        _tqdm = _get_tqdm()
 
         import time as _time
         t_start = _time.perf_counter()
@@ -92,49 +89,126 @@ class SequentialBPETokenizer:
         pbar = (
             _tqdm(total=num_merges, desc="Sequential BPE", unit="merge",
                   dynamic_ncols=True)
-            if _have_tqdm else None
+            if _tqdm is not None else None
         )
 
         next_token_id = 256
         merges_done = 0
 
+        # ── Build initial data structures ────────────────────────────────
+        # pair_freqs   : pair -> current frequency (kept incrementally)
+        # pair_locs    : pair -> set of positions where it appears
+        # prev / next_ : doubly-linked list over the token array so we can
+        #                do O(1) neighbour lookups without shifting a list
+        n = len(tokens)
+        prev = list(range(-1, n - 1))   # prev[i] = previous alive index
+        # next_[i] = next alive index (n = end)
+        next_ = list(range(1, n + 1))
+        alive = [True] * n
+
+        pair_freqs: Dict[Tuple[int, int], int] = collections.defaultdict(int)
+        pair_locs:  Dict[Tuple[int, int], set] = collections.defaultdict(set)
+
+        for i in range(n - 1):
+            p = (tokens[i], tokens[i + 1])
+            pair_freqs[p] += 1
+            pair_locs[p].add(i)
+
+        # Max-heap via negated frequencies
+        import heapq as _heapq
+        heap = [(-freq, pair) for pair, freq in pair_freqs.items()]
+        _heapq.heapify(heap)
+
         for merge_idx in range(num_merges):
             t0 = _time.perf_counter()
 
-            # Count pair frequencies
-            pair_freqs = self._get_pair_freqs(tokens)
+            # Pop until we find a pair whose heap entry is still current
+            best_pair = None
+            freq = 0
+            while heap:
+                neg_freq, p = _heapq.heappop(heap)
+                current = pair_freqs.get(p, 0)
+                if current >= 2 and current == -neg_freq:
+                    best_pair = p
+                    freq = current
+                    break
 
-            if not pair_freqs:
-                break
-
-            # Get the most frequent pair
-            most_common_pair = max(pair_freqs, key=pair_freqs.get)
-            freq = pair_freqs[most_common_pair]
-
-            # Stop if even the most common pair appears < 2 times
-            if freq < 2:
+            if best_pair is None:
                 break
 
             # Register the merge
             new_token_id = next_token_id
-            self.merges[most_common_pair] = new_token_id
-            self.id_to_pair[new_token_id] = most_common_pair
-            self.merge_order.append(most_common_pair)
+            self.merges[best_pair] = new_token_id
+            self.id_to_pair[new_token_id] = best_pair
+            self.merge_order.append(best_pair)
             next_token_id += 1
             merges_done += 1
 
-            # Rewrite token sequence: single linear pass
-            tokens = self._apply_merge(tokens, most_common_pair, new_token_id)
+            # ── Apply merge incrementally ────────────────────────────────
+            positions = list(pair_locs.pop(best_pair, set()))
+            pair_freqs.pop(best_pair, None)
+            toks_remaining = n - sum(1 for a in alive if not a)
+
+            for pos in positions:
+                # Skip if either slot was already consumed
+                if not alive[pos]:
+                    continue
+                right = next_[pos]
+                if right >= n or not alive[right]:
+                    continue
+                if tokens[pos] != best_pair[0] or tokens[right] != best_pair[1]:
+                    continue
+
+                # --- remove left neighbour pair ---
+                lft = prev[pos]
+                if lft >= 0 and alive[lft]:
+                    lp = (tokens[lft], tokens[pos])
+                    pair_freqs[lp] -= 1
+                    pair_locs[lp].discard(lft)
+
+                # --- remove right neighbour pair ---
+                rgt = next_[right]
+                if rgt < n and alive[rgt]:
+                    rp = (tokens[right], tokens[rgt])
+                    pair_freqs[rp] -= 1
+                    pair_locs[rp].discard(right)
+
+                # --- perform the merge ---
+                tokens[pos] = new_token_id
+                alive[right] = False
+                # stitch linked list: skip `right`
+                next_[pos] = next_[right]
+                if next_[right] < n:
+                    prev[next_[right]] = pos
+
+                # --- add new left neighbour pair ---
+                if lft >= 0 and alive[lft]:
+                    lp2 = (tokens[lft], new_token_id)
+                    pair_freqs[lp2] += 1
+                    pair_locs[lp2].add(lft)
+                    _heapq.heappush(heap, (-pair_freqs[lp2], lp2))
+
+                # --- add new right neighbour pair ---
+                rgt2 = next_[pos]
+                if rgt2 < n and alive[rgt2]:
+                    rp2 = (new_token_id, tokens[rgt2])
+                    pair_freqs[rp2] += 1
+                    pair_locs[rp2].add(pos)
+                    _heapq.heappush(heap, (-pair_freqs[rp2], rp2))
 
             step_ms = (_time.perf_counter() - t0) * 1000
+            toks_remaining = sum(alive)
             if pbar is not None:
                 pbar.set_postfix({
                     "merge":    merges_done,
                     "freq":     freq,
-                    "toks":     len(tokens),
+                    "toks":     toks_remaining,
                     "ms/merge": f"{step_ms:.1f}",
                 })
                 pbar.update(1)
+
+        # Rebuild compact token list from linked-list structure
+        tokens = [tokens[i] for i in range(n) if alive[i]]
 
         if pbar is not None:
             pbar.close()

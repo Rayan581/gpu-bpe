@@ -50,12 +50,12 @@ def gpu_count_pairs(
     n = len(d_tokens)
     if n < 2:
         return {}
-    lefts = d_tokens[:-1].astype(cp.int64)
+    lefts  = d_tokens[:-1].astype(cp.int64)
     rights = d_tokens[1:].astype(cp.int64)
-    keys = lefts * vocab_cap + rights
+    keys   = lefts * vocab_cap + rights
     unique_keys, counts = cp.unique(keys, return_counts=True)
     uk = unique_keys.get() if CUDA_AVAILABLE else unique_keys
-    uc = counts.get() if CUDA_AVAILABLE else counts
+    uc = counts.get()      if CUDA_AVAILABLE else counts
     result: Dict[Tuple[int, int], int] = {}
     for k, c in zip(uk, uc):
         result[(int(k) // vocab_cap, int(k) % vocab_cap)] = int(c)
@@ -77,8 +77,8 @@ def gpu_apply_wave(
     if n < 2 or not wave:
         return d_tokens
 
-    lefts = d_tokens[:-1].astype(cp.int64)
-    rights = d_tokens[1:].astype(cp.int64)
+    lefts     = d_tokens[:-1].astype(cp.int64)
+    rights    = d_tokens[1:].astype(cp.int64)
     pair_keys = lefts * vocab_cap + rights
 
     wave_keys_np = np.array(
@@ -86,21 +86,21 @@ def gpu_apply_wave(
     )
     wave_vals_np = np.array([nid for (_, nid) in wave], dtype=np.int32)
 
-    sort_order = np.argsort(wave_keys_np)
+    sort_order   = np.argsort(wave_keys_np)
     wave_keys_np = wave_keys_np[sort_order]
     wave_vals_np = wave_vals_np[sort_order]
 
     d_wave_keys = cp.asarray(wave_keys_np)
     d_wave_vals = cp.asarray(wave_vals_np)
 
-    idx = cp.searchsorted(d_wave_keys, pair_keys, side='left')
+    idx      = cp.searchsorted(d_wave_keys, pair_keys, side='left')
     in_range = idx < len(d_wave_keys)
     idx_safe = cp.clip(idx, 0, len(d_wave_keys) - 1)
-    exact = d_wave_keys[idx_safe] == pair_keys
+    exact    = d_wave_keys[idx_safe] == pair_keys
     hit_mask = in_range & exact
 
     out_tokens = d_tokens.copy().astype(cp.int32)
-    alive = cp.ones(n, dtype=cp.bool_)
+    alive      = cp.ones(n, dtype=cp.bool_)
 
     hit_positions = cp.where(hit_mask)[0]
     if hit_positions.size > 0:
@@ -110,9 +110,9 @@ def gpu_apply_wave(
         right_positions = right_positions[right_positions < n]
         alive[right_positions] = False
 
-    alive_int = alive.view(cp.int8)
-    scan = cp.cumsum(alive_int).astype(cp.int32) - 1
-    new_len = int(alive_int.sum())
+    alive_int   = alive.view(cp.int8)
+    scan        = cp.cumsum(alive_int).astype(cp.int32) - 1
+    new_len     = int(alive_int.sum())
     out_compact = cp.empty(new_len, dtype=cp.int32)
     out_compact[scan[alive]] = out_tokens[alive]
     return out_compact
@@ -132,10 +132,10 @@ def _speculative_select_gpu(
     Phase 1+2: speculative merge selection.
     Initial pair counts via GPU; shadow-array invalidation on CPU.
     """
-    d_tok = cp.asarray(np.array(tokens_orig, dtype=np.int32))
+    d_tok          = cp.asarray(np.array(tokens_orig, dtype=np.int32))
     pair_freq_dict = gpu_count_pairs(d_tok, vocab_cap)
 
-    shadow = list(tokens_orig)
+    shadow    = list(tokens_orig)
     dead: set = set()
     pair_locs: Dict = collections.defaultdict(list)
     for i in range(len(tokens_orig) - 1):
@@ -147,22 +147,22 @@ def _speculative_select_gpu(
         heapq.heappush(heap, (-freq, counter, pair))
         counter += 1
 
-    invalidated: set = set()
-    next_id = base_next_id
+    invalidated: set  = set()
+    next_id           = base_next_id
     merge_order: list = []
-    new_vocab:  dict = {}
+    new_vocab:  dict  = {}
 
     try:
-        from tqdm.auto import tqdm as _tqdm
-        _have_tqdm = True
+        from tokenizer._progress import get_tqdm as _get_tqdm
+        _tqdm = _get_tqdm()
     except ImportError:
-        _have_tqdm = False
+        _tqdm = None
 
     t_start = time.perf_counter()
     pbar = (
         _tqdm(total=num_merges, desc="GPU BPE (speculative)", unit="merge",
               dynamic_ncols=True)
-        if _have_tqdm else None
+        if _tqdm is not None else None
     )
 
     for merge_idx in range(num_merges):
@@ -177,9 +177,9 @@ def _speculative_select_gpu(
                 continue
             act = sum(
                 1 for pos in pair_locs[p]
-                if pos not in dead
+                if pos     not in dead
                 and pos + 1 not in dead
-                and shadow[pos] == p[0]
+                and shadow[pos]     == p[0]
                 and shadow[pos + 1] == p[1]
             )
             if act >= 2:
@@ -200,9 +200,9 @@ def _speculative_select_gpu(
 
         valid_positions = [
             pos for pos in pair_locs[best_pair]
-            if pos not in dead
+            if pos     not in dead
             and pos + 1 not in dead
-            and shadow[pos] == best_pair[0]
+            and shadow[pos]     == best_pair[0]
             and shadow[pos + 1] == best_pair[1]
         ]
         for pos in valid_positions:
@@ -243,7 +243,7 @@ def _speculative_select_gpu(
     elapsed = time.perf_counter() - t_start
     n = len(merge_order)
     print(f"  _speculative_select done: {n} merges in {elapsed:.2f}s "
-          f"({elapsed/max(n, 1)*1000:.1f} ms/merge avg, "
+          f"({elapsed/max(n,1)*1000:.1f} ms/merge avg, "
           f"dead positions: {len(dead):,})")
 
     return merge_order, new_vocab
@@ -263,10 +263,10 @@ def _build_dag(merge_order: list) -> dict:
 
 def _topo_levels(deps: dict) -> list:
     """Phase 4: topological wave assignment — independent merges per level."""
-    n = len(deps)
-    level = [-1] * n
+    n        = len(deps)
+    level    = [-1] * n
     children: dict = collections.defaultdict(list)
-    in_deg = [0] * n
+    in_deg   = [0] * n
 
     for node, parents in deps.items():
         for p in parents:
@@ -281,7 +281,7 @@ def _topo_levels(deps: dict) -> list:
         u = q.popleft()
         for v in children[u]:
             in_deg[v] -= 1
-            level[v] = max(level[v], level[u] + 1)
+            level[v]   = max(level[v], level[u] + 1)
             if in_deg[v] == 0:
                 q.append(v)
 
@@ -319,14 +319,14 @@ def cuda_bpe(
     tokens: list = []
     for c in text:
         if c not in c2i:
-            tid = len(c2i)
-            c2i[c] = tid
+            tid      = len(c2i)
+            c2i[c]   = tid
             i2s[tid] = c
         tokens.append(c2i[c])
 
     base_id = len(c2i)
-    vocab = dict(i2s)
-    v_cap = vocab_cap or (base_id + num_merges + 10)
+    vocab   = dict(i2s)
+    v_cap   = vocab_cap or (base_id + num_merges + 10)
 
     merge_order, new_vocab = _speculative_select_gpu(
         tokens, num_merges, base_id, v_cap
@@ -341,10 +341,10 @@ def cuda_bpe(
     for nid in sorted(new_vocab):
         vocab[nid] = resolve(nid)
 
-    levels = _topo_levels(_build_dag(merge_order))
+    levels  = _topo_levels(_build_dag(merge_order))
     d_tokens = cp.asarray(np.array(tokens, dtype=np.int32))
     for lv in levels:
-        wave = [merge_order[i] for i in lv]
+        wave     = [merge_order[i] for i in lv]
         d_tokens = gpu_apply_wave(d_tokens, wave, v_cap)
 
     final = d_tokens.get().tolist() if CUDA_AVAILABLE else d_tokens.tolist()
@@ -368,26 +368,26 @@ def standard_bpe(
     tokens: list = []
     for c in text:
         if c not in c2i:
-            tid = len(c2i)
-            c2i[c] = tid
+            tid      = len(c2i)
+            c2i[c]   = tid
             i2s[tid] = c
         tokens.append(c2i[c])
 
     next_id = len(c2i)
     merges: list = []
-    vocab = dict(i2s)
+    vocab   = dict(i2s)
 
     try:
-        from tqdm.auto import tqdm as _tqdm
-        _have_tqdm = True
+        from tokenizer._progress import get_tqdm as _get_tqdm
+        _tqdm = _get_tqdm()
     except ImportError:
-        _have_tqdm = False
+        _tqdm = None
 
     t_start = time.perf_counter()
     pbar = (
         _tqdm(total=num_merges, desc="standard_bpe", unit="merge",
               dynamic_ncols=True)
-        if _have_tqdm else None
+        if _tqdm is not None else None
     )
 
     for merge_idx in range(num_merges):
@@ -401,7 +401,7 @@ def standard_bpe(
         if f[best] < 2:
             break
 
-        nid = next_id
+        nid      = next_id
         next_id += 1
         vocab[nid] = vocab[best[0]] + vocab[best[1]]
         merges.append((best, nid))
@@ -411,7 +411,7 @@ def standard_bpe(
         while i < len(tokens):
             if (
                 i < len(tokens) - 1
-                and tokens[i] == best[0]
+                and tokens[i]     == best[0]
                 and tokens[i + 1] == best[1]
             ):
                 new_t.append(nid)
@@ -436,7 +436,7 @@ def standard_bpe(
 
     elapsed = time.perf_counter() - t_start
     print(f"  standard_bpe done: {len(merges)} merges in {elapsed:.2f}s "
-          f"({elapsed/max(len(merges), 1)*1000:.1f} ms/merge avg)")
+          f"({elapsed/max(len(merges),1)*1000:.1f} ms/merge avg)")
 
     return vocab, merges, tokens
 
@@ -462,12 +462,12 @@ class CudaBPETokenizer:
     _DOC_SEP = 0x0A   # newline separator between documents
 
     def __init__(self, vocab_size: int = 50257):
-        self.vocab_size = vocab_size
+        self.vocab_size      = vocab_size
         self.merge_order:  list = []
         self.dag_levels:   list = []
         self.id_to_merge:  dict = {}
-        self.vocab_cap:    int = vocab_size + 10
-        self._trained = False
+        self.vocab_cap:    int  = vocab_size + 10
+        self._trained      = False
 
     # ── Training ──────────────────────────────────────────────────────────
 
@@ -497,8 +497,7 @@ class CudaBPETokenizer:
 
         self.vocab_cap = 256 + num_merges + 10
 
-        print(
-            f"  [1/4] Speculative merge selection (target {num_merges} merges)...")
+        print(f"  [1/4] Speculative merge selection (target {num_merges} merges)...")
         t0_phase = time.perf_counter()
         self.merge_order, self.id_to_merge = _speculative_select_gpu(
             flat, num_merges, 256, self.vocab_cap
@@ -515,11 +514,10 @@ class CudaBPETokenizer:
         t0_phase = time.perf_counter()
         self.dag_levels = _topo_levels(deps) if self.merge_order else []
         dag_depth = len(self.dag_levels)
-        print(
-            f"        Levels computed  ({time.perf_counter()-t0_phase:.2f}s)")
+        print(f"        Levels computed  ({time.perf_counter()-t0_phase:.2f}s)")
 
         if self.merge_order:
-            avg = len(self.merge_order) / max(dag_depth, 1)
+            avg         = len(self.merge_order) / max(dag_depth, 1)
             parallelism = (1 - dag_depth / len(self.merge_order)) * 100
             print(
                 f"        DAG depth: {dag_depth} waves "
@@ -527,8 +525,7 @@ class CudaBPETokenizer:
             )
 
         self._trained = True
-        print(
-            f"  [4/4] Done. {len(self.merge_order)} merges, {dag_depth} waves")
+        print(f"  [4/4] Done. {len(self.merge_order)} merges, {dag_depth} waves")
         return dag_depth, dag_depth
 
     # ── Encoding ──────────────────────────────────────────────────────────
@@ -543,7 +540,7 @@ class CudaBPETokenizer:
 
         d_tokens = cp.asarray(np.array(tokens, dtype=np.int32))
         for level_indices in self.dag_levels:
-            wave = [self.merge_order[i] for i in level_indices]
+            wave     = [self.merge_order[i] for i in level_indices]
             d_tokens = gpu_apply_wave(d_tokens, wave, self.vocab_cap)
 
         return d_tokens.get().tolist() if CUDA_AVAILABLE else d_tokens.tolist()
