@@ -24,24 +24,18 @@ _extracted_text/
 *.egg-info/
 .eggs/
 
-# Project outputs and caches
-outputs/
-.cache/
-cache/
+.claude/
 cache/checkpoints/
 cache/logs/
-cache/datasets/
 
 # Project documents
 *.pdf
 *.docx
 *.doc
+*.zip
+!GPU-Accelerated Parallel BPE.pdf
 
 # OS files
 .DS_Store
 Thumbs.db
 desktop.ini
-
-# IDE configuration
-.claude/
-.old/
